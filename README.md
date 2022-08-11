@@ -142,17 +142,155 @@ Because web3.js supports to make signatures and EIP712 support to verify them an
   * **Lack of allowance of payment token amount for auction 2:** 
   When making offers to two auctions concurrently, NFTMarketplace only check the allowance of payment token amount for each offer(bid).
   In this case, when user(bider) buy the first NFT auction, the allowance of payment token has reduced and isn't enough for purchasing second NFT auction with payment token.
+  * **Security:** When processing the payment, should consider preventing some attack methods such as reentrancy attack, self destruct attack and so on.
 - Possible optimization
   * **Project codebase optimization:** Can refactoring the listing NFT on sale and listing NFT on auction into 1 function by adding listingType member and endPeriod.
 
 #### 4. Optional Bonus: Provide a simple proof-of-concept implementation.
-Proof of concept is a process of determining whether a Blockchain project idea can be feasible in a real-world situation.
-Tokenomics, Roadmap, Launch, Colligate result with Roadmap and Evaluate
 
+`Simple proof-of-concept for Marketplace contract`
 
+```jsx
+contract Marketplace is Ownable, ReentrancyGuard {
+    
+    ...
+    
+    constructor() {
+        ...
+        DOMAIN_SEPARATOR = keccak256(abi.encode(
+            keccak256(bytes("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)")),
+            keccak256("Marketplace"),
+            keccak256("1"),
+            97,
+            address(this)
+        ));
+        BUY_SALT = keccak256(bytes("List(uint256 nonce,address from,uint256 tokenID,uint256 price)"));
+        SELL_SALT = keccak256(bytes("Offer(uint256 nonce,address from,uint256 tokenID,uint256 price)"));
+        ...
+    }
+    
+    function buy(uint tokenId, address from, uint price, bytes memory signature) external payable {
+        ...
+        bytes32 digest = keccak256(abi.encodePacked(uint8(0x19), uint8(0x01), DOMAIN_SEPARATOR, keccak256(abi.encode(BUY_SALT, nonces[tokenId] ++, from, tokenId, price, uint256(is_premium ? 1: 0)))));
+        address recoveredAddress = ECDSA.recover(digest, signature);
+        require(recoveredAddress == from, "invalid signature");
+        ...
+    }
 
+    function sell(uint tokenId, address to, uint price, bool is_premium, bytes memory signature) external {
+        ...
+        bytes32 digest = keccak256(abi.encodePacked(uint8(0x19), uint8(0x01), DOMAIN_SEPARATOR, keccak256(abi.encode(SELL_SALT, nonces[tokenId] ++, to, tokenId, price))));
+        address recoveredAddress = ECDSA.recover(digest, signature);
+        require(recoveredAddress == to, "invalid signature");
+        ...
+    }
+}
+```
 
+`Simple proof-of-concept for signing message using web3.js`
 
+```js
+const listSign = async (nonce, tokenID, from, price) => {
+    const msgParams = JSON.stringify({
+        domain: {
+          chainId: 56,
+          name: 'Marketplace',
+          verifyingContract: marketplace_addr,
+          version: '1'
+        },
+    
+        message: {
+            nonce,
+            from,
+            tokenID,
+            price
+        },
+        primaryType: 'List',
+        types: {
+          EIP712Domain: [
+            { name: 'name', type: 'string' },
+            { name: 'version', type: 'string' },
+            { name: 'chainId', type: 'uint256' },
+            { name: 'verifyingContract', type: 'address' }
+          ],
+          List: [
+            { name: 'nonce', type: 'uint256' },
+            { name: 'from', type: 'address' },
+            { name: 'tokenID', type: 'uint256' },
+            { name: 'price', type: 'uint256' }
+          ],
+        },
+    });
 
+    var params = [from, msgParams];
+    var method = 'eth_signTypedData_v3';
+    const { _web3 } = await getWeb3();
+    return new Promise((resolve, reject) => {
+      _web3.currentProvider.sendAsync(
+            {
+                method,
+                params,
+                from,
+            },
+            function (err, result) {
+                if (err) reject(err);
+                else if (result.error) reject(result.err);
+                else if (result.result) resolve(result.result);
+            }
+        );
+    });
+}
 
+const auctionSign = async (nonce, tokenID, from, price, deadline) => {
+  const msgParams = JSON.stringify({
+      domain: {
+        chainId: 56,
+        name: 'Marketplace',
+        verifyingContract: marketplace_addr,
+        version: '1'
+      },
+  
+      message: {
+          nonce,
+          from,
+          tokenID,
+          price,
+          deadline
+      },
+      primaryType: 'List',
+      types: {
+        EIP712Domain: [
+          { name: 'name', type: 'string' },
+          { name: 'version', type: 'string' },
+          { name: 'chainId', type: 'uint256' },
+          { name: 'verifyingContract', type: 'address' }
+        ],
+        List: [
+          { name: 'nonce', type: 'uint256' },
+          { name: 'from', type: 'address' },
+          { name: 'tokenID', type: 'uint256' },
+          { name: 'price', type: 'uint256' },
+          { name: 'deadline', type: 'uint256' }
+        ],
+      },
+  });
 
+  var params = [from, msgParams];
+  var method = 'eth_signTypedData_v3';
+  const { _web3 } = await getWeb3();
+  return new Promise((resolve, reject) => {
+    _web3.currentProvider.sendAsync(
+          {
+              method,
+              params,
+              from,
+          },
+          function (err, result) {
+              if (err) reject(err);
+              else if (result.error) reject(result.err);
+              else if (result.result) resolve(result.result);
+          }
+      );
+  });
+}
+```
